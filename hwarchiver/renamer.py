@@ -219,6 +219,22 @@ def apply_plan(plan: RenamePlan) -> RenamePlan:
     return plan
 
 
+def journal_items(plan: RenamePlan) -> List[Dict[str, str]]:
+    """把已完成的改名转成日志条目（相对路径，便于撤销）。"""
+    items = []
+    for item in plan.items:
+        if not item.applied:
+            continue
+        items.append(
+            {
+                "type": "rename",
+                "from": str(item.src.relative_to(plan.root)),
+                "to": str(item.dst.relative_to(plan.root)),
+            }
+        )
+    return items
+
+
 def render_plan(plan: RenamePlan, title: str = "改名预览") -> str:
     """把计划渲染成 旧名 -> 新名 的表格。"""
     if not plan.items:
