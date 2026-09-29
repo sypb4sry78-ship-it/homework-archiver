@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# 工具自身生成的元数据目录
+.hwarchiver/
+
+# 测试/演示用的临时作业文件
+sample_homework/
+*.tmp
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
