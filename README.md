@@ -2,20 +2,23 @@
 
 作业文件批量归档小工具。零第三方依赖，Python 3.8+ 直接运行。
 
-三个需求各一次提交、各一个 PR：
+仓库：<https://github.com/sypb4sry78-ship-it/homework-archiver>
 
-| PR | 需求 | 状态 |
-| --- | --- | --- |
-| #1 | 扫描与列出 | 已完成 |
-| #2 | 批量改名（预览 + 确认 + 冲突避让） | 已完成 |
-| #3 | 归档、报告与撤销 | 已完成 |
+三个需求各一次提交、各一个 PR，已全部合并：
+
+| PR | 需求 | 改动 | 状态 |
+| --- | --- | --- | --- |
+| [#1](https://github.com/sypb4sry78-ship-it/homework-archiver/pull/1) | 扫描与列出 | 6 个文件 | 已合并 |
+| [#2](https://github.com/sypb4sry78-ship-it/homework-archiver/pull/2) | 批量改名（预览 + 确认 + 冲突避让） | 4 个文件 | 已合并 |
+| [#3](https://github.com/sypb4sry78-ship-it/homework-archiver/pull/3) | 归档、报告与撤销 | 8 个文件 | 已合并 |
+| [#4](https://github.com/sypb4sry78-ship-it/homework-archiver/pull/4) | 文档：回填 PR 链接 | 1 个文件 | 已合并 |
 
 ## 安装
 
 无需安装，克隆后直接使用：
 
 ```bash
-git clone <仓库地址>
+git clone https://github.com/sypb4sry78-ship-it/homework-archiver.git
 cd homework-archiver
 python -m hwarchiver --help
 ```
