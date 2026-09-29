@@ -8,14 +8,24 @@ import sys
 from typing import List, Optional
 
 from . import __version__
-from .renamer import apply_plan, build_plan, render_plan
-from .scanner import scan, render_table
+from .archiver import (
+    apply_archive,
+    build_archive_plan,
+    journal_items as archive_journal_items,
+    parse_category_map,
+    render_archive_plan,
+)
+from .journal import Journal
+from .renamer import apply_plan, build_plan, journal_items as rename_journal_items, render_plan
+from .report import build_report, latest_report
+from .scanner import render_table, scan
+from .undo import apply_undo, build_undo_plan, render_undo
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hwarchiver",
-        description="作业文件批量归档工具（扫描 / 改名 / 归档）",
+        description="作业文件批量归档工具（扫描 / 改名 / 归档 / 撤销）",
     )
     parser.add_argument("--version", action="version", version=f"hwarchiver {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -65,6 +75,47 @@ def build_parser() -> argparse.ArgumentParser:
     p_rename.add_argument("--yes", action="store_true", help="配合 --apply，跳过交互确认")
     p_rename.add_argument("--json", action="store_true", help="以 JSON 输出计划/结果")
     p_rename.set_defaults(func=cmd_rename)
+
+    # ---- 需求 3：归档 ----
+    p_archive = sub.add_parser("archive", help="按学期/类别归档到子文件夹（默认只预览）")
+    p_archive.add_argument("directory", help="要整理的文件夹")
+    p_archive.add_argument(
+        "--by",
+        choices=["semester", "category", "ext"],
+        default="semester",
+        help="归档方式：semester 按学期 / category 按类别 / ext 按扩展名（默认 semester）",
+    )
+    p_archive.add_argument("--ext", help="只处理指定扩展名，逗号分隔")
+    p_archive.add_argument("--recursive", action="store_true", help="同时处理子目录（默认只处理当前层）")
+    p_archive.add_argument(
+        "--map",
+        nargs="*",
+        metavar="关键词=类别",
+        help="自定义类别规则，如 --map 实验=实验报告 期末=考试答卷（在默认规则上追加）",
+    )
+    p_archive.add_argument(
+        "--on-conflict",
+        choices=["suffix", "skip"],
+        default="suffix",
+        help="目标已存在时：suffix=自动加 _1/_2 避让（默认）；skip=跳过",
+    )
+    p_archive.add_argument("--apply", action="store_true", help="真正执行移动（不加则只预览）")
+    p_archive.add_argument("--yes", action="store_true", help="配合 --apply，跳过交互确认")
+    p_archive.add_argument("--json", action="store_true", help="以 JSON 输出计划/结果")
+    p_archive.set_defaults(func=cmd_archive)
+
+    # ---- 需求 3：撤销 ----
+    p_undo = sub.add_parser("undo", help="撤销上一次改名/归档")
+    p_undo.add_argument("directory", help="操作所在的文件夹")
+    p_undo.add_argument("--yes", action="store_true", help="跳过交互确认")
+    p_undo.add_argument("--json", action="store_true", help="以 JSON 输出结果")
+    p_undo.set_defaults(func=cmd_undo)
+
+    # ---- 需求 3：报告 ----
+    p_report = sub.add_parser("report", help="查看最近一次整理报告")
+    p_report.add_argument("directory", help="操作所在的文件夹")
+    p_report.add_argument("--json", action="store_true", help="输出 JSON 版本的报告")
+    p_report.set_defaults(func=cmd_report)
 
     return parser
 
@@ -140,6 +191,94 @@ def cmd_rename(args: argparse.Namespace) -> int:
     apply_plan(plan)
     print("\n执行结果：")
     print(render_plan(plan, title="改名结果"))
+    _finish(args.directory, "rename", plan.items, rename_journal_items(plan))
+    return 0
+
+
+def cmd_archive(args: argparse.Namespace) -> int:
+    try:
+        plan = build_archive_plan(
+            args.directory,
+            by=args.by,
+            exts=_split_ext(args.ext),
+            recursive=args.recursive,
+            category_map=parse_category_map(args.map),
+            on_conflict=args.on_conflict,
+        )
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return 2
+
+    print(render_archive_plan(plan, title="归档预览"))
+
+    if args.json:
+        print()
+        print(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
+
+    if not args.apply:
+        print("\n以上仅为预览，没有移动任何文件。核对无误后加 --apply 才会真正归档。")
+        return 0
+
+    if not args.yes and not request_confirmation("\n按以上预览执行归档？[y/N] "):
+        print("已取消，未做任何改动。")
+        return 1
+
+    apply_archive(plan)
+    print("\n执行结果：")
+    print(render_archive_plan(plan, title="归档结果"))
+    _finish(args.directory, f"archive:{plan.by}", plan.items, archive_journal_items(plan))
+    return 0
+
+
+def _finish(directory: str, kind: str, items, journal_entries) -> None:
+    """执行收尾：写操作日志（供撤销）+ 生成整理报告。"""
+    if not journal_entries:
+        print("\n本次没有任何文件被改动，未生成报告。")
+        return
+    journal = Journal(directory)
+    journal.record(kind.split(":")[0], journal_entries)
+    report = build_report(kind, journal.root, items)
+    md_path, json_path = report.save(journal.reports_dir)
+    print(f"\n整理报告：{md_path}")
+    print(f"         {json_path}")
+    print(f"撤销本次操作：python -m hwarchiver undo {directory}")
+
+
+def cmd_undo(args: argparse.Namespace) -> int:
+    journal = Journal(args.directory)
+    op = journal.last_operation()
+    if op is None:
+        print("没有可撤销的操作（.hwarchiver/ops/ 里没有记录）。")
+        return 0
+
+    print(f"将要撤销：{op.kind} 操作（{op.created_at}），共 {len(op.items)} 个文件")
+    for entry in op.items:
+        print(f"  {entry['to']}  ->  {entry['from']}")
+
+    if args.json:
+        print(json.dumps(op.to_dict(), ensure_ascii=False, indent=2))
+
+    if not args.yes and not request_confirmation("\n确认撤销？[y/N] "):
+        print("已取消，未做任何改动。")
+        return 1
+
+    items = build_undo_plan(journal, op)
+    apply_undo(journal, op, items)
+    print()
+    print(render_undo(op, items))
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    journal = Journal(args.directory)
+    md_path = latest_report(journal.reports_dir)
+    if md_path is None:
+        print("还没有任何整理报告。")
+        return 0
+    if args.json:
+        print((md_path.with_suffix(".json")).read_text(encoding="utf-8"))
+    else:
+        print(md_path.read_text(encoding="utf-8"))
     return 0
 
 
